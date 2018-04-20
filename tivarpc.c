@@ -33,6 +33,8 @@ static uint8_t Rxframe[MAX_FRAME_SIZE];	//Usar una global permite ahorrar pila e
 static uint8_t Txframe[MAX_FRAME_SIZE]; //Usar una global permite ahorrar pila en las tareas, pero hay que tener cuidado al transmitir desde varias tareas!!!!
 static uint32_t gRemoteProtocolErrors=0;
 
+PARAMETERS_LED_PWM_COLOR LastColor;
+
 //Funciones "internas//
 static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize);
 
@@ -68,6 +70,7 @@ static int32_t RPC_LEDGpio(uint32_t param_size, void *param)
 
     if (check_and_extract_command_param(param, param_size, sizeof(parametro),&parametro)>0)
     {
+        ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3);
         GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3,parametro.value);
         return 0;	//Devuelve Ok (valor mayor no negativo)
     }
@@ -83,6 +86,10 @@ static int32_t RPC_UnimplementedCommand(uint32_t param_size, void *param)
     return PROT_ERROR_UNIMPLEMENTED_COMMAND;
 }
 
+
+
+
+
 //Funcion que se ejecuta cuando llega el comando que configura el BRILLO
 static int32_t RPC_LEDPwmBrightness(uint32_t param_size, void *param)
 {
@@ -91,8 +98,8 @@ static int32_t RPC_LEDPwmBrightness(uint32_t param_size, void *param)
 
     if (check_and_extract_command_param(param, param_size, sizeof(parametro),&parametro)>0)
     {
-
-
+        RGBEnable();
+        RGBColorSet(LastColor.colors);
         RGBIntensitySet(parametro.rIntensity);
 
         return 0;	//Devuelve Ok (valor mayor no negativo)
@@ -101,6 +108,28 @@ static int32_t RPC_LEDPwmBrightness(uint32_t param_size, void *param)
     {
         return PROT_ERROR_INCORRECT_PARAM_SIZE; //Devuelve un error
     }
+}
+
+static int32_t RPC_LEDPwmRGB(uint32_t param_size, void *param)
+{
+    PARAMETERS_LED_PWM_COLOR parametro;
+
+    if(check_and_extract_command_param(param, param_size, sizeof(parametro), &parametro) > 0){
+        RGBEnable();
+
+        parametro.colors[0] = parametro.colors[0] << 8;
+        parametro.colors[1] = parametro.colors[1] << 8;
+        parametro.colors[2] = parametro.colors[2] << 8;
+
+        memcpy(&LastColor.colors, &parametro.colors, sizeof(PARAMETERS_LED_PWM_COLOR));
+        UARTprintf("red: %d\ngreen: %d\nblue: %d\n", LastColor.colors[0], LastColor.colors[1], LastColor.colors[2]);
+
+        RGBColorSet(parametro.colors);
+        return 0;
+    }else{
+        return PROT_ERROR_INCORRECT_PARAM_SIZE;
+    }
+
 }
 
 // *********************************************************************************************
@@ -112,6 +141,7 @@ static const rpc_function_prototype rpc_function_table[]={
                                             RPC_Ping, /* Responde al comando ping */
                                             RPC_LEDGpio, /* Responde al comando LEDS */
                                             RPC_LEDPwmBrightness, /* Responde al comando Brillo */
+                                            RPC_LEDPwmRGB,
                                             RPC_UnimplementedCommand /* Este comando no esta implementado aun */
 };
 
@@ -292,15 +322,7 @@ static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize)
     }
     else
     {
-
-        if (i<(MINIMUN_FRAME_SIZE-START_SIZE))
-        {
-            return PROT_ERROR_BAD_SIZE; //La trama no tiene el tamanio minimo
-        }
-        else
-        {
-            return (i-END_SIZE); //Tamanio de la trama sin los bytes de inicio y fin
-        }
+        return (i-END_SIZE);    //Devuelve el numero de bytes recibidos (quitando el de BYTE DE STOP)
     }
 }
 

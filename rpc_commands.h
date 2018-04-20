@@ -17,7 +17,7 @@ typedef enum {
     COMMAND_PING,
     COMMAND_LED_GPIO,
     COMMAND_LED_PWM_BRIGHTNESS,
-    //etc, etc...
+    COMMAND_LED_PWM_COLOR
 } commandTypes;
 
 //Estructuras relacionadas con los parametros de los comandos. El estuadiante debera crear las
@@ -42,6 +42,10 @@ typedef union{
 typedef struct {
     float rIntensity;
 } PARAMETERS_LED_PWM_BRIGHTNESS;
+
+typedef struct {
+    uint32_t colors[3];
+} PARAMETERS_LED_PWM_COLOR;
 
 #pragma pack()  //...Pero solo para los comandos que voy a intercambiar, no para el resto.
 
