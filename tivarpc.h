@@ -8,17 +8,29 @@
 #define TIVARPC_H__
 
 
-#include<stdbool.h>
-#include<stdint.h>
+#include <stdbool.h>
+#include <stdint.h>
+
 
 #include "serialprotocol.h"
 #include "rpc_commands.h"
+#include "FreeRTOS.h"
+#include "queue.h"
+
 
 //parametros de funcionamiento de la tarea
 #define TIVARPC_TASK_STACK (512)
 #define TIVARPC_TASK_PRIORITY (tskIDLE_PRIORITY+2)
 
+
+
+
 void TivaRPC_Init(void);
 int32_t TivaRPC_SendFrame(uint8_t comando,void *parameter,int32_t paramsize);
+
+xQueueHandle ButtonsQueue;
+
+
+
 
 #endif /*TIVARPC_H__ */

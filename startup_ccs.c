@@ -62,6 +62,7 @@ extern void GPIOFIntHandler(void);
 extern void ADCIntHandler(void);
 extern void UARTStdioIntHandler(void);
 extern void USB0DeviceIntHandler(void);
+extern void ButtonPressed(void);
 //*****************************************************************************
 //
 // The vector table.  Note that the proper constructs must be placed on this to
@@ -119,7 +120,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Analog Comparator 2
     IntDefaultHandler,                      // System Control (PLL, OSC, BO)
     IntDefaultHandler,                      // FLASH Control
-    IntDefaultHandler,                      // GPIO Port F
+    ButtonPressed,                          // GPIO Port F
     IntDefaultHandler,                      // GPIO Port G
     IntDefaultHandler,                      // GPIO Port H
     IntDefaultHandler,                      // UART2 Rx and Tx

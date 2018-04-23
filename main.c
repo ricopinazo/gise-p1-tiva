@@ -36,8 +36,10 @@
 uint32_t g_ui32CPUUsage;
 uint32_t g_ulSystemClock;
 
-extern void vUARTTask( void *pvParameters );
 
+
+
+extern void vUARTTask( void *pvParameters );
 
 //*****************************************************************************
 //
@@ -51,6 +53,7 @@ extern void vUARTTask( void *pvParameters );
 #ifdef DEBUG
 void __error__(char *nombrefich, uint32_t linea)
 {
+    UARTprintf("Error line: %d\n", linea);
     while(1)
     {
     }
@@ -97,6 +100,9 @@ void vApplicationIdleHook (void)
 }
 
 
+
+
+
 //Esto se ejecuta cada vez que entra a funcionar la tarea Idle
 void vApplicationMallocFailedHook (void)
 {
@@ -118,8 +124,10 @@ extern void vUARTTask( void *pvParameters );
 
 
 
+
+
 // Codigo de tarea de ejemplo: Esta tarea no se llega realmente a crear en el ejemplo inicial
-static portTASK_FUNCTION(LEDTask,pvParameters)
+/*static portTASK_FUNCTION(LEDTask,pvParameters)
 {
 
 	uint8_t estado_led=0;
@@ -144,7 +152,9 @@ static portTASK_FUNCTION(LEDTask,pvParameters)
 			//Esta espera es de unos 2s aproximadamente.
 		}
 	}
-}
+}*/
+
+
 
 
 //*****************************************************************************
@@ -153,7 +163,7 @@ static portTASK_FUNCTION(LEDTask,pvParameters)
 //
 //*****************************************************************************
 int main(void)
-{
+ {
 
 	//
 	// Set the clocking to run at 40 MHz from the PLL.
@@ -200,8 +210,23 @@ int main(void)
 	//Volvemos a configurar los LEDs en modo GPIO POR Defecto
     ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3);
 
+     ButtonsQueue = xQueueCreate(1, sizeof(uint8_t));
+     if(NULL == ButtonsQueue)
+         while(1);
 
-	/********************************      Creacion de tareas 												**/
+     xQueueReset(ButtonsQueue);
+
+
+    ButtonsInit();
+    MAP_GPIOIntTypeSet(GPIO_PORTF_BASE, ALL_BUTTONS,GPIO_BOTH_EDGES);
+    MAP_IntPrioritySet(INT_GPIOF,configMAX_SYSCALL_INTERRUPT_PRIORITY);
+    MAP_GPIOIntEnable(GPIO_PORTF_BASE,ALL_BUTTONS);
+    MAP_IntEnable(INT_GPIOF);
+
+
+
+
+	/********************************      Creacion de tareas   ************************************/
 
 	// Crea la tarea que gestiona los comandos UART (definida en el fichero commands.c)
 	//
@@ -209,6 +234,7 @@ int main(void)
 	{
 		while(1);
 	}
+
 
 	//Esta funcion crea internamente una tarea para las comunicaciones USB.
 	//Ademas, inicializa el USB y configura el perfil USB-CDC
@@ -227,3 +253,18 @@ int main(void)
 	}
 }
 
+
+void ButtonPressed(void)
+{
+    uint8_t poll;
+
+    poll = ROM_GPIOPinRead(GPIO_PORTF_BASE, ALL_BUTTONS);
+    signed portBASE_TYPE higherPriorityTaskWoken = pdFALSE;
+
+
+    if(xQueueSendFromISR(ButtonsQueue, &poll, &higherPriorityTaskWoken) == errQUEUE_FULL)
+        UARTprintf("Cannot sent to queue\n");
+
+    GPIOIntClear(GPIO_PORTF_BASE, ALL_BUTTONS);
+    portEND_SWITCHING_ISR(higherPriorityTaskWoken);
+}

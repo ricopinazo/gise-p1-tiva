@@ -87,7 +87,7 @@
 #define configIDLE_SHOULD_YIELD             1 // 1/0: Si 1, la tarea IDLE SIEMPRE cede el control a otra tarea, aunque tenga tambien prioridad 0
 #define configUSE_MUTEXES                   1 // 1/0: Indica si se van a usar MUTEX en la aplicación
 #define configUSE_RECURSIVE_MUTEXES         0 // 1/0: Indica si se van a usar MUTEX recursivos en la aplicación
-#define configUSE_COUNTING_SEMAPHORES       0 // 1/0: Indica si se van a usar semaforos contadores en la aplicación
+#define configUSE_COUNTING_SEMAPHORES       1 // 1/0: Indica si se van a usar semaforos contadores en la aplicación
 #define configUSE_MALLOC_FAILED_HOOK	1 // 1/0: Indica si se ejecutará una función de usuario en caso de fallo de memoria dinámica
 #define configUSE_APPLICATION_TASK_TAG	0 // 1/0: Activa el modo TAG de las tareas (relacionado con la depuración)
 #define configGENERATE_RUN_TIME_STATS	1 // 1/0: Activa la recogida de estadísticas (relacionado con la depuración)

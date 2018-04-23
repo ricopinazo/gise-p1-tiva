@@ -26,6 +26,7 @@
 #include "semphr.h"
 #include "rpc_commands.h"
 
+
 //Defino a un tipo que es un puntero a funcion con el prototipo que tienen que tener las funciones que definamos
 typedef int32_t (*rpc_function_prototype)(uint32_t param_size, void *param);
 
@@ -33,11 +34,13 @@ static uint8_t Rxframe[MAX_FRAME_SIZE];	//Usar una global permite ahorrar pila e
 static uint8_t Txframe[MAX_FRAME_SIZE]; //Usar una global permite ahorrar pila en las tareas, pero hay que tener cuidado al transmitir desde varias tareas!!!!
 static uint32_t gRemoteProtocolErrors=0;
 
+xSemaphoreHandle FrameMutex;
+
+
 PARAMETERS_LED_PWM_COLOR LastColor;
 
 //Funciones "internas//
 static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize);
-
 // *********************************************************************************************
 // ********************* FUNCIONES RPC (se ejecutan en respuesta a comandos RPC recibidos desde el interfaz Qt *********************
 // *********************************************************************************************
@@ -52,12 +55,16 @@ static int32_t RPC_RejectedCommand(uint32_t param_size, void *param)
 }
 
 
+
+
+
 //Funcion que se ejecuta cuando llega un PING
 static int32_t RPC_Ping(uint32_t param_size, void *param)
 {
     int32_t numdatos;
 
     numdatos=TivaRPC_SendFrame(COMMAND_PING,NULL,0);
+
     return numdatos;
 }
 
@@ -129,8 +136,30 @@ static int32_t RPC_LEDPwmRGB(uint32_t param_size, void *param)
     }else{
         return PROT_ERROR_INCORRECT_PARAM_SIZE;
     }
-
 }
+
+static int32_t RPC_SendButtonsStatus(uint32_t param_size, void *param)
+{
+    //MAP_GPIOIntDisable(GPIO_PORTF_BASE,ALL_BUTTONS);
+    int32_t numdatos;
+     //UARTprintf("dataReceived: %d\n", *(uint8_t *) param);
+     //MAP_GPIOIntEnable(GPIO_PORTF_BASE,ALL_BUTTONS);
+
+    numdatos = TivaRPC_SendFrame(COMMAND_BUTTONS_STATUS, (uint8_t *)param, param_size);
+
+    return numdatos;
+}
+
+static int32_t RPC_ButtonsStatusRequest(uint32_t param_size, void *param){
+
+    int32_t numdatos;
+
+    uint8_t ButtonsPoll = GPIOPinRead(GPIO_PORTF_BASE, ALL_BUTTONS);
+    numdatos = TivaRPC_SendFrame(COMMAND_BUTTONS_REQUEST, &ButtonsPoll, sizeof(ButtonsPoll));
+
+    return numdatos;
+}
+
 
 // *********************************************************************************************
 // ********************* Tabla de  FUnciones RPC
@@ -142,6 +171,8 @@ static const rpc_function_prototype rpc_function_table[]={
                                             RPC_LEDGpio, /* Responde al comando LEDS */
                                             RPC_LEDPwmBrightness, /* Responde al comando Brillo */
                                             RPC_LEDPwmRGB,
+                                            RPC_SendButtonsStatus,
+                                            RPC_ButtonsStatusRequest,
                                             RPC_UnimplementedCommand /* Este comando no esta implementado aun */
 };
 
@@ -149,6 +180,38 @@ static const rpc_function_prototype rpc_function_table[]={
 // Codigo para procesar los comandos recibidos a traves del canal USB del micro ("conector lateral")
 //Esta tarea decodifica los comandos y ejecuta la función que corresponda a cada uno de ellos (por posicion)
 //También gestiona posibles errores en la comunicacion
+
+
+
+
+static portTASK_FUNCTION(ButtonRTOSTask, pvParameters)
+{
+    uint8_t dataReceived;
+    while(1){
+
+        if(xQueueReceive(ButtonsQueue, &dataReceived, portMAX_DELAY) != pdTRUE){
+            while(1);
+        }
+       xSemaphoreTake(FrameMutex,portMAX_DELAY);
+       rpc_function_table[COMMAND_BUTTONS_STATUS](sizeof(dataReceived), &dataReceived);
+       xSemaphoreGive(FrameMutex);
+        /*if(dataReceived == 0x01)
+            GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_3, GPIO_PIN_3);
+        else if(dataReceived == 0x10)
+            GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, GPIO_PIN_1);
+        else if(dataReceived == 0x00)
+            GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, GPIO_PIN_2);
+
+        vTaskDelay(0.5*configTICK_RATE_HZ);
+
+        GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3, 0);*/
+
+    }
+}
+
+
+
+
 static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
 
     //Frame es global en este fichero, se reutiliza en las funciones que envian respuestas ---> CUIDADO!!!
@@ -158,6 +221,14 @@ static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
     void *ptrtoreceivedparam;
 
     /* The parameters are not used. (elimina el warning)*/
+    FrameMutex = xSemaphoreCreateMutex();
+    if(NULL == FrameMutex)
+        while(1);
+
+    if((xTaskCreate(ButtonRTOSTask, "ButtonRTOSTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL)) != pdTRUE){
+        while(1);
+    }
+
     ( void ) pvParameters;
 
     for(;;)
@@ -191,6 +262,7 @@ static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
                 {
                     int32_t error_status;
                     //Aqui es donde se ejecuta a funcion de la tabla que corresponde con el valor de comando que ha llegado
+                    xSemaphoreTake(FrameMutex,portMAX_DELAY);
                     error_status=rpc_function_table[command](numdatos,ptrtoreceivedparam); //La funcion puede devolver códigos de error.
 
                     //Una vez ejecutado, se comprueba si ha habido errores.
@@ -226,18 +298,21 @@ static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
                         {
                             PARAMETERS_COMMAND_REJECTED parametro;
                             parametro.command=command;
+                            xSemaphoreTake(FrameMutex,portMAX_DELAY);
                             numdatos=TivaRPC_SendFrame(COMMAND_REJECTED,&parametro,sizeof(parametro));
                             UARTprintf("RPC Error: Unexpected command: %x\n",(uint32_t)command);
                             gRemoteProtocolErrors++;
                             //Aqui se podria, ademas, comprobar numdatos....
                         }
                         break;
-                        //AÑadir casos de error adicionales aqui...
                         default:
                             /* No hacer nada */
                             break;
                     }
+                    xSemaphoreGive(FrameMutex);
+
                 }
+
                 else
                 {
                     /* El valor del comando que ha llegado es superior al numero de comandos que hay implementados en la tabla  */
@@ -257,8 +332,10 @@ static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
             gRemoteProtocolErrors++;
             // Procesamiento del error (TODO)
         }
+
     }
 }
+
 
 
 //Inicializa la tarea que recibe comandos (se debe llamar desde main())
