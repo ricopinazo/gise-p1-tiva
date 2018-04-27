@@ -20,6 +20,7 @@ typedef enum {
     COMMAND_LED_PWM_COLOR,
     COMMAND_BUTTONS_STATUS,
     COMMAND_BUTTONS_REQUEST,
+    COMMAND_BUTTONS_ANSWER
 } commandTypes;
 
 //Estructuras relacionadas con los parametros de los comandos. El estuadiante debera crear las
