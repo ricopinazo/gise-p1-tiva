@@ -7,10 +7,13 @@
 
 #ifndef RPCCOMMANDS_H
 #define RPCCOMMANDS_H
-//Códigos de los comandos y definicion de parametros para el protocolo RPC
+//Cï¿½digos de los comandos y definicion de parametros para el protocolo RPC
 
-// El estudiante debe añadir aqui cada nuevo comando que implemente. IMPORTANTE el orden de los comandos
+// El estudiante debe aï¿½adir aqui cada nuevo comando que implemente. IMPORTANTE el orden de los comandos
 // debe SER EL MISMO aqui, y en el codigo equivalente en la parte del microcontrolador (Code Composer)
+
+
+#define MASK_FOR_12_BITS 0x0FF0
 
 typedef enum {
     COMMAND_REJECTED,
@@ -20,7 +23,10 @@ typedef enum {
     COMMAND_LED_PWM_COLOR,
     COMMAND_BUTTONS_STATUS,
     COMMAND_BUTTONS_REQUEST,
-    COMMAND_BUTTONS_ANSWER
+    COMMAND_BUTTONS_ANSWER,
+    COMMAND_SAMPLING_CONFIG,
+    COMMAND_ADC_8BITS_SAMPLES,
+    COMMAND_ADC_12BITS_SAMPLES
 } commandTypes;
 
 //Estructuras relacionadas con los parametros de los comandos. El estuadiante debera crear las
@@ -50,6 +56,32 @@ typedef struct {
     uint32_t colors[3];
 } PARAMETERS_LED_PWM_COLOR;
 
+typedef union {
+    struct {
+      uint8_t active : 1;
+      uint8_t mode12 : 1;
+      uint16_t freq : 14;
+    }config;
+} PARAMETERS_SAMPLING_CONFIG;
+
+typedef struct {
+    uint32_t channel_0;
+    uint32_t channel_1;
+    uint32_t channel_2;
+    uint32_t channel_3;
+} SimpleADCSample;
+
+typedef struct {
+    struct{
+        uint16_t samples[8];
+    } channel [4];
+} PARAMETERS_ADC_12SAMPLES;
+
+typedef struct {
+    struct{
+        uint8_t samples[8];
+    } channel [4];
+} PARAMETERS_ADC_8SAMPLES;
 
 
 #pragma pack()  //...Pero solo para los comandos que voy a intercambiar, no para el resto.

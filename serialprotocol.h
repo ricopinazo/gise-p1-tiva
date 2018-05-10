@@ -35,7 +35,7 @@
 
 #define MINIMUN_FRAME_SIZE (START_SIZE+COMMAND_SIZE+CHECKSUM_SIZE+END_SIZE)
 
-#define MAX_DATA_SIZE (32)
+#define MAX_DATA_SIZE (64)
 #define MAX_FRAME_SIZE (2*(MAX_DATA_SIZE))
 
 //Codigos de Error del protocolo

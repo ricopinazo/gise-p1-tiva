@@ -13,6 +13,7 @@
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
 #include "inc/hw_ints.h"
+#include "inc/hw_timer.h"
 #include "driverlib/gpio.h"
 #include "driverlib/pin_map.h"
 #include "driverlib/rom.h"
@@ -37,7 +38,7 @@ uint32_t g_ui32CPUUsage;
 uint32_t g_ulSystemClock;
 
 xQueueHandle ButtonsQueue;
-
+xQueueHandle ADCQueue;
 
 
 extern void vUARTTask( void *pvParameters );
@@ -73,7 +74,7 @@ void __error__(char *nombrefich, uint32_t linea)
 
 
 void SystemInit(void);
-
+void ConfigADC();
 
 void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName)
 {
@@ -185,6 +186,8 @@ int main(void)
 		while(1);
 	}
 
+	ConfigADC();
+
 
 	//Esta funcion crea internamente una tarea para las comunicaciones USB.
 	//Ademas, inicializa el USB y configura el perfil USB-CDC
@@ -209,7 +212,7 @@ void SystemInit(void)
     //
         // Set the clocking to run at 40 MHz from the PLL.
         //
-        ROM_SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ |
+        SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ |
                 SYSCTL_OSC_MAIN);   //Ponermos el reloj principal a 40 MHz (200 Mhz del Pll dividido por 5)
 
 
@@ -247,6 +250,7 @@ void SystemInit(void)
         SysCtlPeripheralSleepEnable(GREEN_TIMER_PERIPH);
         SysCtlPeripheralSleepEnable(BLUE_TIMER_PERIPH);
         SysCtlPeripheralSleepEnable(RED_TIMER_PERIPH);  //Redundante porque BLUE_TIMER_PERIPH y GREEN_TIMER_PERIPH son el mismo
+        SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_TIMER5);
 
         //Volvemos a configurar los LEDs en modo GPIO POR Defecto
         ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3);
@@ -257,12 +261,22 @@ void SystemInit(void)
 
          xQueueReset(ButtonsQueue);
 
+         ADCQueue = xQueueCreate(16, sizeof(SimpleADCSample));
+         if(NULL == ADCQueue)
+             while(1);
+
+         xQueueReset(ADCQueue);
 
         ButtonsInit();
         MAP_GPIOIntTypeSet(GPIO_PORTF_BASE, ALL_BUTTONS,GPIO_BOTH_EDGES);
         MAP_IntPrioritySet(INT_GPIOF,configMAX_SYSCALL_INTERRUPT_PRIORITY);
         MAP_GPIOIntEnable(GPIO_PORTF_BASE,ALL_BUTTONS);
         MAP_IntEnable(INT_GPIOF);
+
+        SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER5);
+        TimerClockSourceSet(TIMER5_BASE,TIMER_CLOCK_SYSTEM);
+        TimerConfigure(TIMER5_BASE, TIMER_CFG_PERIODIC);
+        TimerLoadSet(TIMER5_BASE, TIMER_A, SysCtlClockGet() - 1);
 
 }
 
@@ -277,8 +291,58 @@ void ButtonPressed(void)
 
 
     if(xQueueSendFromISR(ButtonsQueue, &poll, &higherPriorityTaskWoken) == errQUEUE_FULL)
-        UARTprintf("Cannot sent to queue\n");
+
+
 
     GPIOIntClear(GPIO_PORTF_BASE, ALL_BUTTONS);
     portEND_SWITCHING_ISR(higherPriorityTaskWoken);
 }
+
+void ADC_ISR(void){
+
+   portBASE_TYPE higherPriorityTaskWoken = pdFALSE;
+
+   SimpleADCSample sample;
+
+   ADCIntClear(ADC0_BASE,1);
+
+   ADCSequenceDataGet(ADC0_BASE, 1,(uint32_t *)&sample);
+
+   if(xQueueSendFromISR(ADCQueue, &sample, &higherPriorityTaskWoken) == errQUEUE_FULL){
+
+   }
+
+   portEND_SWITCHING_ISR(higherPriorityTaskWoken);
+
+}
+
+
+void ConfigADC(){
+
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
+    SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_ADC0);
+
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+    SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_GPIOE);
+
+    GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3|GPIO_PIN_2|GPIO_PIN_1|GPIO_PIN_0);
+
+    ADCClockConfigSet(ADC0_BASE, ADC_CLOCK_RATE_FULL, 1);
+
+    ADCSequenceConfigure(ADC0_BASE,1,ADC_TRIGGER_TIMER, 0);
+    TimerControlTrigger(TIMER5_BASE, TIMER_A, true);
+
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 0, ADC_CTL_CH0);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 1, ADC_CTL_CH1);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 2, ADC_CTL_CH2);
+    ADCSequenceStepConfigure(ADC0_BASE, 1, 3, ADC_CTL_CH3 | ADC_CTL_IE | ADC_CTL_END );
+
+    ADCSequenceEnable(ADC0_BASE,1);
+
+    ADCIntClear(ADC0_BASE,1);
+    ADCIntEnable(ADC0_BASE,1);
+    IntPrioritySet(INT_ADC0SS1, configMAX_SYSCALL_INTERRUPT_PRIORITY);
+    IntEnable(INT_ADC0SS1);
+}
+
+

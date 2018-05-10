@@ -63,6 +63,8 @@ extern void ADCIntHandler(void);
 extern void UARTStdioIntHandler(void);
 extern void USB0DeviceIntHandler(void);
 extern void ButtonPressed(void);
+extern void ADC_ISR(void);
+
 //*****************************************************************************
 //
 // The vector table.  Note that the proper constructs must be placed on this to
@@ -105,7 +107,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // PWM Generator 2
     IntDefaultHandler,                      // Quadrature Encoder 0
     IntDefaultHandler,                      // ADC Sequence 0
-    IntDefaultHandler,                      // ADC Sequence 1
+    ADC_ISR,                                // ADC Sequence 1
     IntDefaultHandler,                      // ADC Sequence 2
     IntDefaultHandler,                      // ADC Sequence 3
     IntDefaultHandler,                      // Watchdog timer
@@ -139,9 +141,9 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // uDMA Software Transfer
     IntDefaultHandler,                      // uDMA Error
     IntDefaultHandler,                      // ADC1 Sequence 0
-    IntDefaultHandler,                      // ADC1 Sequence 1
+    IntDefaultHandler,                                // ADC1 Sequence 1
     IntDefaultHandler,                      // ADC1 Sequence 2
-    IntDefaultHandler,                      // ADC1 Sequence 3
+    IntDefaultHandler,                                // ADC1 Sequence 3
     0,                                      // Reserved
     0,                                      // Reserved
     IntDefaultHandler,                      // GPIO Port J
@@ -228,7 +230,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // PWM 1 Generator 1
     IntDefaultHandler,                      // PWM 1 Generator 2
     IntDefaultHandler,                      // PWM 1 Generator 3
-    IntDefaultHandler                       // PWM 1 Fault
+    IntDefaultHandler,                       // PWM 1 Fault
 };
 
 //*****************************************************************************

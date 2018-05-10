@@ -11,4 +11,5 @@
 	<rts value="libc.a"/>
 	<templateProperties value="id=com.ti.common.project.core.emptyProjectWithMainTemplate,"/>
 	<isTargetManual value="false"/>
+	<origin value="/media/guille/Datos/Documentos/Universidad/Tercero/Sistemas empotrados/Proyectos/Proyecto1/CSS"/>
 </projectOptions>

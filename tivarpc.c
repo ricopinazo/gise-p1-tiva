@@ -37,13 +37,16 @@ static uint32_t gRemoteProtocolErrors=0;
 xSemaphoreHandle frame_mutex;
 xSemaphoreHandle uart_mutex;
 
-
 extern xQueueHandle ButtonsQueue;
+extern xQueueHandle ADCQueue;
 
 PARAMETERS_LED_PWM_COLOR last_color;
+PARAMETERS_SAMPLING_CONFIG sampling_config;
+
 
 //Funciones "internas//
 static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize);
+
 // *********************************************************************************************
 // ********************* FUNCIONES RPC (se ejecutan en respuesta a comandos RPC recibidos desde el interfaz Qt *********************
 // *********************************************************************************************
@@ -123,10 +126,13 @@ static int32_t RPC_LEDPwmBrightness(uint32_t param_size, void *param)
 static int32_t RPC_LEDPwmRGB(uint32_t param_size, void *param)
 {
     PARAMETERS_LED_PWM_COLOR parametro;
+    TimerDisable(TIMER5_BASE, TIMER_A);
 
     if(check_and_extract_command_param(param, param_size, sizeof(parametro), &parametro) > 0)
     {
         RGBEnable();
+
+        TimerDisable(TIMER5_BASE, TIMER_A);
 
         parametro.colors[0] = parametro.colors[0] << 8;
         parametro.colors[1] = parametro.colors[1] << 8;
@@ -134,6 +140,7 @@ static int32_t RPC_LEDPwmRGB(uint32_t param_size, void *param)
 
         memcpy(&last_color.colors, &parametro.colors, sizeof(PARAMETERS_LED_PWM_COLOR));
         RGBColorSet(parametro.colors);
+
         return 0;
     }else
     {
@@ -153,6 +160,37 @@ static int32_t RPC_ButtonsStatusAnswer(uint32_t param_size, void *param)
 }
 
 
+static int32_t RPC_SamplingConfig(uint32_t param_size, void *param)
+{
+    if(check_and_extract_command_param(param, param_size, sizeof(sampling_config),&sampling_config) > 0)
+    {
+        ADCIntDisable(ADC0_BASE,ADC_INT_SS1);
+        TimerDisable(TIMER5_BASE, TIMER_A);
+
+        TimerLoadSet(TIMER5_BASE,TIMER_A,(uint32_t)(SysCtlClockGet()/sampling_config.config.freq) - 1);
+
+        if(sampling_config.config.mode12)
+        {
+            ADCHardwareOversampleConfigure(ADC0_BASE,4);
+        } else
+        {
+            ADCHardwareOversampleConfigure(ADC0_BASE,0);
+        }
+
+        if(sampling_config.config.active)
+        {
+          TimerEnable(TIMER5_BASE, TIMER_A);
+          ADCIntClear(ADC0_BASE,ADC_INT_SS1);
+          ADCIntEnable(ADC0_BASE,ADC_INT_SS1);
+        }
+
+        return 0;
+    }else{
+        return PROT_ERROR_INCORRECT_PARAM_SIZE;
+    }
+
+}
+
 // *********************************************************************************************
 // ********************* Tabla de  FUnciones RPC
 // *********************************************************************************************
@@ -165,7 +203,9 @@ static const rpc_function_prototype rpc_function_table[]={
                                             RPC_LEDPwmRGB,
                                             RPC_SendButtonsStatus,
                                             RPC_ButtonsStatusAnswer,
-                                            RPC_UnimplementedCommand /* Este comando no esta implementado aun */
+                                            RPC_UnimplementedCommand,
+                                            RPC_SamplingConfig,
+                                             /* Este comando no esta implementado aun */
 };
 
 
@@ -191,10 +231,66 @@ static portTASK_FUNCTION(ButtonRTOSTask, pvParameters)
     }
 }
 
+static portTASK_FUNCTION(ADCTask, pvParameters)
+{
+   static SimpleADCSample sample;
+   static PARAMETERS_ADC_12SAMPLES complete_12sample;
+   static PARAMETERS_ADC_8SAMPLES complete_8sample;
+
+   char samples_count = 0;
+
+   while(1){
+       if(xQueueReceive(ADCQueue, &sample, portMAX_DELAY) != pdTRUE)
+           while(1);
+
+       xSemaphoreTake(frame_mutex, portMAX_DELAY);
+
+       MAP_IntDisable(INT_GPIOF);
+
+
+       if(!sampling_config.config.mode12)
+       {
+           complete_8sample.channel[0].samples[samples_count] = (uint8_t)((sample.channel_0) >> 4);
+           complete_8sample.channel[1].samples[samples_count] = (uint8_t)((sample.channel_1) >> 4);
+           complete_8sample.channel[2].samples[samples_count] = (uint8_t)((sample.channel_2) >> 4);
+           complete_8sample.channel[3].samples[samples_count] = (uint8_t)((sample.channel_3) >> 4);
+
+           if(samples_count == 7){
+             samples_count = 0;
+
+             TivaRPC_SendFrame(COMMAND_ADC_8BITS_SAMPLES, &complete_8sample, sizeof(complete_8sample));
+
+           }else{
+              samples_count++;
+           }
+
+       } else {
+           complete_12sample.channel[0].samples[samples_count] = (uint16_t)sample.channel_0;
+           complete_12sample.channel[1].samples[samples_count] = (uint16_t)sample.channel_1;
+           complete_12sample.channel[2].samples[samples_count] = (uint16_t)sample.channel_2;
+           complete_12sample.channel[3].samples[samples_count] = (uint16_t)sample.channel_3;
+
+           if(samples_count == 7)
+           {
+               samples_count = 0;
+               TivaRPC_SendFrame(COMMAND_ADC_12BITS_SAMPLES, &complete_12sample, sizeof(complete_12sample));
+           }else
+           {
+               samples_count++;
+           }
+       }
+
+       MAP_IntEnable(INT_GPIOF);
+       xSemaphoreGive(frame_mutex);
+
+
+   }
+}
 
 
 
-static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
+
+static portTASK_FUNCTION(TivaRPC_ServerTask, pvParameters ){
 
     //Frame es global en este fichero, se reutiliza en las funciones que envian respuestas ---> CUIDADO!!!
 
@@ -284,9 +380,9 @@ static portTASK_FUNCTION( TivaRPC_ServerTask, pvParameters ){
                         default:
                             break;
                     }
+
                     xSemaphoreGive(uart_mutex);
                     xSemaphoreGive(frame_mutex);
-
                 }
 
                 else
@@ -332,6 +428,9 @@ void TivaRPC_Init(void)
         while(1);
 
 
+
+
+
     if(xTaskCreate(TivaRPC_ServerTask, (portCHAR *)"usbser",TIVARPC_TASK_STACK, NULL, TIVARPC_TASK_PRIORITY, NULL) != pdTRUE)
     {
         while(1);
@@ -339,6 +438,19 @@ void TivaRPC_Init(void)
 
     if((xTaskCreate(ButtonRTOSTask, "ButtonRTOSTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL)) != pdTRUE)
     {
+        while(1);
+    }
+
+    ADCIntDisable(ADC0_BASE,ADC_INT_SS1);
+    TimerDisable(TIMER5_BASE, TIMER_A);
+
+    sampling_config.config.active = 0;
+    sampling_config.config.mode12 = 0;
+    sampling_config.config.freq = 1;
+
+    TimerLoadSet(TIMER5_BASE,TIMER_A,(SysCtlClockGet()/sampling_config.config.freq) - 1);
+
+    if(xTaskCreate(ADCTask, "ADCTask", 512, NULL, tskIDLE_PRIORITY + 1, NULL) != pdTRUE){
         while(1);
     }
 
@@ -394,7 +506,3 @@ static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize)
         return (i-END_SIZE);    //Devuelve el numero de bytes recibidos (quitando el de BYTE DE STOP)
     }
 }
-
-
-
-
