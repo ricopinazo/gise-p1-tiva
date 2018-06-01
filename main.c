@@ -29,6 +29,8 @@
 #include "queue.h"
 #include "semphr.h"
 #include "utils/cpu_usage.h"
+#include "event_groups.h"
+#include "sparkfun_apds9960drv.h"
 
 #include "drivers/rgb.h"
 #include <tivarpc.h>
@@ -40,6 +42,7 @@ uint32_t g_ulSystemClock;
 xQueueHandle ButtonsQueue;
 xQueueHandle ADCQueue;
 
+EventGroupHandle_t events;
 
 extern void vUARTTask( void *pvParameters );
 
@@ -171,7 +174,7 @@ extern void vUARTTask( void *pvParameters );
 //
 //*****************************************************************************
 int main(void)
- {
+{
 
 
     SystemInit();
@@ -252,8 +255,12 @@ void SystemInit(void)
         SysCtlPeripheralSleepEnable(RED_TIMER_PERIPH);  //Redundante porque BLUE_TIMER_PERIPH y GREEN_TIMER_PERIPH son el mismo
         SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_TIMER5);
 
+        SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+        SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_GPIOE);
+
         //Volvemos a configurar los LEDs en modo GPIO POR Defecto
         ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3);
+        GPIOPinTypeGPIOInput(GPIO_PORTE_BASE, GPIO_PIN_4);
 
          ButtonsQueue = xQueueCreate(1, sizeof(uint8_t));
          if(NULL == ButtonsQueue)
@@ -269,9 +276,18 @@ void SystemInit(void)
 
         ButtonsInit();
         MAP_GPIOIntTypeSet(GPIO_PORTF_BASE, ALL_BUTTONS,GPIO_BOTH_EDGES);
+        GPIOIntTypeSet(GPIO_PORTE_BASE, GPIO_PIN_4,GPIO_BOTH_EDGES);
+
         MAP_IntPrioritySet(INT_GPIOF,configMAX_SYSCALL_INTERRUPT_PRIORITY);
+        IntPrioritySet(INT_GPIOE,configMAX_SYSCALL_INTERRUPT_PRIORITY);
+
         MAP_GPIOIntEnable(GPIO_PORTF_BASE,ALL_BUTTONS);
+        GPIOIntEnable(GPIO_PORTE_BASE,GPIO_PIN_4);
+        GPIOIntClear(GPIO_PORTE_BASE, GPIO_PIN_4);
+
         MAP_IntEnable(INT_GPIOF);
+        IntEnable(INT_GPIOE);
+
 
         SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER5);
         TimerClockSourceSet(TIMER5_BASE,TIMER_CLOCK_SYSTEM);
@@ -289,13 +305,22 @@ void ButtonPressed(void)
     poll = ROM_GPIOPinRead(GPIO_PORTF_BASE, ALL_BUTTONS);
     signed portBASE_TYPE higherPriorityTaskWoken = pdFALSE;
 
-
-    if(xQueueSendFromISR(ButtonsQueue, &poll, &higherPriorityTaskWoken) == errQUEUE_FULL)
-
-
+    if(xQueueSendFromISR(ButtonsQueue, &poll, &higherPriorityTaskWoken) == pdTRUE);
+        xEventGroupSetBitsFromISR(events, BUTTONS_FLAG, &higherPriorityTaskWoken);
 
     GPIOIntClear(GPIO_PORTF_BASE, ALL_BUTTONS);
     portEND_SWITCHING_ISR(higherPriorityTaskWoken);
+}
+
+void GSensorProximityInterrupt(void)
+{
+    signed portBASE_TYPE higherPriorityTaskWoken = pdFALSE;
+
+    xEventGroupSetBitsFromISR(events, GSENSOR_FLAG, &higherPriorityTaskWoken);
+
+    GPIOIntClear(GPIO_PORTE_BASE, GPIO_PIN_4);
+    portEND_SWITCHING_ISR(higherPriorityTaskWoken);
+
 }
 
 void ADC_ISR(void){
@@ -321,9 +346,6 @@ void ConfigADC(){
 
     SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
     SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_ADC0);
-
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-    SysCtlPeripheralSleepEnable(SYSCTL_PERIPH_GPIOE);
 
     GPIOPinTypeADC(GPIO_PORTE_BASE, GPIO_PIN_3|GPIO_PIN_2|GPIO_PIN_1|GPIO_PIN_0);
 

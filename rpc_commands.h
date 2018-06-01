@@ -13,7 +13,7 @@
 // debe SER EL MISMO aqui, y en el codigo equivalente en la parte del microcontrolador (Code Composer)
 
 
-#define MASK_FOR_12_BITS 0x0FF0
+//#define MASK_FOR_12_BITS 0x0FF0
 
 typedef enum {
     COMMAND_REJECTED,
@@ -26,7 +26,12 @@ typedef enum {
     COMMAND_BUTTONS_ANSWER,
     COMMAND_SAMPLING_CONFIG,
     COMMAND_ADC_8BITS_SAMPLES,
-    COMMAND_ADC_12BITS_SAMPLES
+    COMMAND_ADC_12BITS_SAMPLES,
+    COMMAND_GSENSOR_COLOR_REQUEST,
+    COMMAND_GSENSOR_COLOR_ANSWER,
+    COMMAND_GSENSOR_GESTURE,
+    COMMAND_GSENSOR_CONFIG_THRESHOLD,
+    COMMAND_GSENSOR_THRESHOLD_EXCEED
 } commandTypes;
 
 //Estructuras relacionadas con los parametros de los comandos. El estuadiante debera crear las
@@ -38,8 +43,10 @@ typedef struct {
     uint8_t command;
 } PARAMETERS_COMMAND_REJECTED;
 
-typedef union{
-    struct {
+typedef union
+{
+    struct
+    {
          uint8_t padding:1;
          uint8_t red:1;
          uint8_t blue:1;
@@ -48,41 +55,67 @@ typedef union{
     uint8_t value;
 } PARAMETERS_LED_GPIO;
 
-typedef struct {
+typedef struct
+{
     float rIntensity;
 } PARAMETERS_LED_PWM_BRIGHTNESS;
 
-typedef struct {
+typedef struct
+{
     uint32_t colors[3];
 } PARAMETERS_LED_PWM_COLOR;
 
-typedef union {
-    struct {
+typedef union
+{
+    struct
+    {
       uint8_t active : 1;
       uint8_t mode12 : 1;
       uint16_t freq : 14;
     }config;
 } PARAMETERS_SAMPLING_CONFIG;
 
-typedef struct {
+typedef struct
+{
     uint32_t channel_0;
     uint32_t channel_1;
     uint32_t channel_2;
     uint32_t channel_3;
 } SimpleADCSample;
 
-typedef struct {
-    struct{
+typedef struct
+{
+    struct
+    {
         uint16_t samples[8];
     } channel [4];
 } PARAMETERS_ADC_12SAMPLES;
 
-typedef struct {
-    struct{
+typedef struct
+{
+    struct
+    {
         uint8_t samples[8];
     } channel [4];
 } PARAMETERS_ADC_8SAMPLES;
 
+typedef struct
+{
+    uint16_t red;
+    uint16_t green;
+    uint16_t blue;
+    uint16_t intensity;
+} PARAMETERS_GSENSOR_COLOR;
+
+typedef struct
+{
+    uint8_t gesture;
+} PARAMETERS_GSENSOR_GESTURE;
+
+typedef struct
+{
+    uint8_t threshold;
+} PARAMETERS_GSENSOR_CONFIG_THRESHOLD;
 
 #pragma pack()  //...Pero solo para los comandos que voy a intercambiar, no para el resto.
 

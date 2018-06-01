@@ -25,7 +25,9 @@
 #include "queue.h"
 #include "semphr.h"
 #include "rpc_commands.h"
-
+#include "event_groups.h"
+#include "drivers/i2c_if.h"
+#include "sparkfun_apds9960drv.h"
 
 //Defino a un tipo que es un puntero a funcion con el prototipo que tienen que tener las funciones que definamos
 typedef int32_t (*rpc_function_prototype)(uint32_t param_size, void *param);
@@ -37,8 +39,10 @@ static uint32_t gRemoteProtocolErrors=0;
 xSemaphoreHandle frame_mutex;
 xSemaphoreHandle uart_mutex;
 
+
 extern xQueueHandle ButtonsQueue;
 extern xQueueHandle ADCQueue;
+extern EventGroupHandle_t events;
 
 PARAMETERS_LED_PWM_COLOR last_color;
 PARAMETERS_SAMPLING_CONFIG sampling_config;
@@ -46,7 +50,7 @@ PARAMETERS_SAMPLING_CONFIG sampling_config;
 
 //Funciones "internas//
 static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize);
-
+unsigned max(unsigned a, unsigned b);
 // *********************************************************************************************
 // ********************* FUNCIONES RPC (se ejecutan en respuesta a comandos RPC recibidos desde el interfaz Qt *********************
 // *********************************************************************************************
@@ -150,6 +154,10 @@ static int32_t RPC_LEDPwmRGB(uint32_t param_size, void *param)
 
 static int32_t RPC_SendButtonsStatus(uint32_t param_size, void *param)
 {
+    xSemaphoreTake(uart_mutex, portMAX_DELAY);
+      UARTprintf("Botones: %d\n\n", *(uint8_t *)param);
+   xSemaphoreGive(uart_mutex);
+
     return TivaRPC_SendFrame(COMMAND_BUTTONS_STATUS, (uint8_t *)param, param_size);
 }
 
@@ -191,6 +199,54 @@ static int32_t RPC_SamplingConfig(uint32_t param_size, void *param)
 
 }
 
+
+
+static int32_t RPC_GSensorColorRequest(uint32_t param_size, void *param)
+{
+
+    PARAMETERS_GSENSOR_COLOR color;
+
+    if(SF_APDS9960_readAmbientLight(&color.intensity))
+    if(SF_APDS9960_readRedLight(&color.red))
+    if(SF_APDS9960_readGreenLight(&color.green))
+    if(SF_APDS9960_readBlueLight(&color.blue))
+
+    TivaRPC_SendFrame(COMMAND_GSENSOR_COLOR_ANSWER, &color, sizeof(PARAMETERS_GSENSOR_COLOR));
+
+    return 0;
+}
+
+static int32_t RPC_GSensorConfigThreshold(uint32_t param_size, void *param)
+{
+
+    PARAMETERS_GSENSOR_CONFIG_THRESHOLD threshold_config;
+    if(check_and_extract_command_param(param, param_size, sizeof(threshold_config),&threshold_config) > 0)
+    {
+        (void)SF_APDS9960_setProximityIntHighThreshold(threshold_config.threshold);
+        return 0;
+    }
+
+    return PROT_ERROR_INCORRECT_PARAM_SIZE;
+}
+
+
+static int32_t RPC_GsensorProximityExceed(uint32_t param_size, void *param)
+{
+
+    static int i = 1;
+    if(i)
+    {
+        GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, GPIO_PIN_1);
+        i =0;
+    }else
+    {
+        GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0);
+        i =1;
+    }
+
+
+    return 0;
+}
 // *********************************************************************************************
 // ********************* Tabla de  FUnciones RPC
 // *********************************************************************************************
@@ -205,6 +261,13 @@ static const rpc_function_prototype rpc_function_table[]={
                                             RPC_ButtonsStatusAnswer,
                                             RPC_UnimplementedCommand,
                                             RPC_SamplingConfig,
+                                            RPC_UnimplementedCommand,
+                                            RPC_UnimplementedCommand,
+                                            RPC_GSensorColorRequest, //11
+                                            RPC_UnimplementedCommand, //12
+                                            RPC_UnimplementedCommand, //13
+                                            RPC_GSensorConfigThreshold, //14
+                                            RPC_GsensorProximityExceed // 15
                                              /* Este comando no esta implementado aun */
 };
 
@@ -218,16 +281,69 @@ static const rpc_function_prototype rpc_function_table[]={
 
 static portTASK_FUNCTION(ButtonRTOSTask, pvParameters)
 {
-    uint8_t data_received;
+
+    EventBits_t uxBits;
+
+    uint8_t button_poll;
+
+    uint8_t prox1 = 0 ,prox2 = 0;
+    uint8_t gesture = 0;
+
+    if(I2C_IF_Open(I2C_MASTER_MODE_STD) < 0)
+        while (1);
+
+    vTaskDelay(10);
+
+    /********* Falta comprobar errores. Se dejara para la parte 4  *********/
+
+    SF_APDS9960_init();
+    SF_APDS9960_enableLightSensor(false);
+    (void)SF_APDS9960_enableGestureSensor(true);
+    (void)SF_APDS9960_setGestureIntEnable(true);
+
+    SF_APDS9960_setMode(SF_APDS9960_PROXIMITY_INT, SF_APDS9960_ON);
+    SF_APDS9960_setLEDDrive(SF_APDS9960_LED_DRIVE_100MA);
+
+    (void)SF_APDS9960_enableProximitySensor(true);
+    (void)SF_APDS9960_setProximityIntEnable(true);
+    (void)SF_APDS9960_setProximityGain(SF_APDS9960_PGAIN_2X);
+    (void)SF_APDS9960_setGestureGain(SF_APDS9960_GGAIN_2X);
+    (void)SF_APDS9960_setProximityIntLowThreshold(0);
+    (void)SF_APDS9960_setProximityIntHighThreshold(100);
+
+
     while(1){
-        if(xQueueReceive(ButtonsQueue, &data_received, portMAX_DELAY) != pdTRUE){
-            while(1);
+        uxBits = xEventGroupWaitBits(events, BUTTONS_FLAG | GSENSOR_FLAG, pdTRUE, pdFALSE, portMAX_DELAY);
+
+        SF_APDS9960_clearProximityInt();
+
+        switch(uxBits)
+        {
+            case BUTTONS_FLAG:
+                if(xQueueReceive(ButtonsQueue, &button_poll, portMAX_DELAY) != pdTRUE)
+
+                MAP_IntDisable(INT_GPIOF);
+                TivaRPC_SendFrame(COMMAND_BUTTONS_STATUS, &button_poll, sizeof(button_poll));
+                MAP_IntEnable(INT_GPIOF);
+
+            break;
+            case GSENSOR_FLAG:
+
+                gesture = SF_APDS9960_readGesture();
+
+                SF_APDS9960_readProximity(&prox1);
+                SF_APDS9960_getProximityIntHighThreshold(&prox2);
+
+                if(gesture)
+                    TivaRPC_SendFrame(COMMAND_GSENSOR_GESTURE, &gesture, sizeof(gesture));
+
+                if(prox1 >= prox2)
+                    TivaRPC_SendFrame(COMMAND_GSENSOR_THRESHOLD_EXCEED, &prox1, sizeof(prox1));
+
+
+            break;
+
         }
-
-       xSemaphoreTake(frame_mutex,portMAX_DELAY);
-       rpc_function_table[COMMAND_BUTTONS_STATUS](sizeof(data_received), &data_received);
-       xSemaphoreGive(frame_mutex);
-
     }
 }
 
@@ -243,11 +359,7 @@ static portTASK_FUNCTION(ADCTask, pvParameters)
        if(xQueueReceive(ADCQueue, &sample, portMAX_DELAY) != pdTRUE)
            while(1);
 
-       xSemaphoreTake(frame_mutex, portMAX_DELAY);
-
        MAP_IntDisable(INT_GPIOF);
-
-
        if(!sampling_config.config.mode12)
        {
            complete_8sample.channel[0].samples[samples_count] = (uint8_t)((sample.channel_0) >> 4);
@@ -281,14 +393,9 @@ static portTASK_FUNCTION(ADCTask, pvParameters)
        }
 
        MAP_IntEnable(INT_GPIOF);
-       xSemaphoreGive(frame_mutex);
-
 
    }
 }
-
-
-
 
 static portTASK_FUNCTION(TivaRPC_ServerTask, pvParameters ){
 
@@ -334,7 +441,6 @@ static portTASK_FUNCTION(TivaRPC_ServerTask, pvParameters ){
                 {
                     int32_t error_status;
                     //Aqui es donde se ejecuta a funcion de la tabla que corresponde con el valor de comando que ha llegado
-                    xSemaphoreTake(frame_mutex,portMAX_DELAY);
                     error_status = rpc_function_table[command](numdatos,ptrtoreceivedparam); //La funcion puede devolver códigos de error.
 
                     //Una vez ejecutado, se comprueba si ha habido errores.
@@ -382,7 +488,6 @@ static portTASK_FUNCTION(TivaRPC_ServerTask, pvParameters ){
                     }
 
                     xSemaphoreGive(uart_mutex);
-                    xSemaphoreGive(frame_mutex);
                 }
 
                 else
@@ -428,15 +533,12 @@ void TivaRPC_Init(void)
         while(1);
 
 
-
-
-
     if(xTaskCreate(TivaRPC_ServerTask, (portCHAR *)"usbser",TIVARPC_TASK_STACK, NULL, TIVARPC_TASK_PRIORITY, NULL) != pdTRUE)
     {
         while(1);
     }
 
-    if((xTaskCreate(ButtonRTOSTask, "ButtonRTOSTask", 256, NULL, tskIDLE_PRIORITY + 1, NULL)) != pdTRUE)
+    if((xTaskCreate(ButtonRTOSTask, "ButtonRTOSTask", 2048, NULL, tskIDLE_PRIORITY + 1, NULL)) != pdTRUE)
     {
         while(1);
     }
@@ -454,6 +556,9 @@ void TivaRPC_Init(void)
         while(1);
     }
 
+    events = xEventGroupCreate();
+    if(NULL == events)
+        while(1);
 
 }
 
@@ -467,12 +572,15 @@ int32_t TivaRPC_SendFrame(uint8_t comando,void *parameter,int32_t paramsize)
 {
     int32_t numdatos;
 
+    xSemaphoreTake(frame_mutex,portMAX_DELAY);
+
     numdatos=create_frame(Txframe,comando,parameter,paramsize,MAX_FRAME_SIZE);
     if (numdatos>=0)
     {
         USBSerialWrite(Txframe,numdatos,portMAX_DELAY);
     }
 
+    xSemaphoreGive(frame_mutex);
     return numdatos;
 }
 
@@ -506,3 +614,4 @@ static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize)
         return (i-END_SIZE);    //Devuelve el numero de bytes recibidos (quitando el de BYTE DE STOP)
     }
 }
+

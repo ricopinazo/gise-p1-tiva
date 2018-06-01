@@ -64,7 +64,8 @@ extern void UARTStdioIntHandler(void);
 extern void USB0DeviceIntHandler(void);
 extern void ButtonPressed(void);
 extern void ADC_ISR(void);
-
+extern void I2C_IF_ISR(void);
+extern void GSensorProximityInterrupt(void);
 //*****************************************************************************
 //
 // The vector table.  Note that the proper constructs must be placed on this to
@@ -96,7 +97,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
-    IntDefaultHandler,                      // GPIO Port E
+    GSensorProximityInterrupt,              // GPIO Port E
     UARTStdioIntHandler,                    // UART0 Rx and Tx
     IntDefaultHandler,                      // UART1 Rx and Tx
     IntDefaultHandler,                      // SSI0 Rx and Tx
@@ -161,7 +162,7 @@ void (* const g_pfnVectors[])(void) =
     0,                                      // Reserved
     0,                                      // Reserved
     IntDefaultHandler,                      // I2C2 Master and Slave
-    IntDefaultHandler,                      // I2C3 Master and Slave
+    I2C_IF_ISR,                      // I2C3 Master and Slave
     IntDefaultHandler,                      // Timer 4 subtimer A
     IntDefaultHandler,                      // Timer 4 subtimer B
     0,                                      // Reserved
@@ -294,7 +295,10 @@ FaultISR(void)
     //
     // Enter an infinite loop.
     //
-    while(1)
+
+    volatile int i = 1;
+
+    while(i)
     {
     }
 }
