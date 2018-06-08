@@ -28,6 +28,12 @@
 #include "event_groups.h"
 #include "drivers/i2c_if.h"
 #include "sparkfun_apds9960drv.h"
+#include "gsensor.h"
+
+
+#define SF_APDS9960_GSTATUS 0xAF
+#define SF_APDS9960_ERROR 0xFF
+
 
 //Defino a un tipo que es un puntero a funcion con el prototipo que tienen que tener las funciones que definamos
 typedef int32_t (*rpc_function_prototype)(uint32_t param_size, void *param);
@@ -38,7 +44,7 @@ static uint32_t gRemoteProtocolErrors=0;
 
 xSemaphoreHandle frame_mutex;
 xSemaphoreHandle uart_mutex;
-
+xSemaphoreHandle i2c_mutex;
 
 extern xQueueHandle ButtonsQueue;
 extern xQueueHandle ADCQueue;
@@ -46,11 +52,16 @@ extern EventGroupHandle_t events;
 
 PARAMETERS_LED_PWM_COLOR last_color;
 PARAMETERS_SAMPLING_CONFIG sampling_config;
+PARAMETERS_GSENSOR_FIFO_MODE fifomod;
+PARAMETERS_GSENSOR_FIFO data_read;
 
 
 //Funciones "internas//
 static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize);
 unsigned max(unsigned a, unsigned b);
+
+extern bool SF_APDS9960_wireReadDataByte(uint8_t reg, uint8_t *val);
+extern int SF_APDS9960_wireReadDataBlock(uint8_t ucRegAddr,uint8_t *pucBlkData,uint8_t ucBlkDataSz);
 // *********************************************************************************************
 // ********************* FUNCIONES RPC (se ejecutan en respuesta a comandos RPC recibidos desde el interfaz Qt *********************
 // *********************************************************************************************
@@ -206,12 +217,12 @@ static int32_t RPC_GSensorColorRequest(uint32_t param_size, void *param)
 
     PARAMETERS_GSENSOR_COLOR color;
 
-    if(SF_APDS9960_readAmbientLight(&color.intensity))
-    if(SF_APDS9960_readRedLight(&color.red))
-    if(SF_APDS9960_readGreenLight(&color.green))
-    if(SF_APDS9960_readBlueLight(&color.blue))
+        if(SF_APDS9960_readAmbientLight(&color.intensity))
+        if(SF_APDS9960_readRedLight(&color.red))
+        if(SF_APDS9960_readGreenLight(&color.green))
+        if(SF_APDS9960_readBlueLight(&color.blue))
 
-    TivaRPC_SendFrame(COMMAND_GSENSOR_COLOR_ANSWER, &color, sizeof(PARAMETERS_GSENSOR_COLOR));
+        TivaRPC_SendFrame(COMMAND_GSENSOR_COLOR_ANSWER, &color, sizeof(PARAMETERS_GSENSOR_COLOR));
 
     return 0;
 }
@@ -247,6 +258,17 @@ static int32_t RPC_GsensorProximityExceed(uint32_t param_size, void *param)
 
     return 0;
 }
+
+
+static int32_t RPC_GsensorModeConfig(uint32_t param_size, void *param)
+{
+    if(check_and_extract_command_param(param, param_size, sizeof(PARAMETERS_GSENSOR_FIFO_MODE),&fifomod) > 0)
+        return 0;
+
+    return PROT_ERROR_INCORRECT_PARAM_SIZE;
+}
+
+
 // *********************************************************************************************
 // ********************* Tabla de  FUnciones RPC
 // *********************************************************************************************
@@ -267,7 +289,8 @@ static const rpc_function_prototype rpc_function_table[]={
                                             RPC_UnimplementedCommand, //12
                                             RPC_UnimplementedCommand, //13
                                             RPC_GSensorConfigThreshold, //14
-                                            RPC_GsensorProximityExceed // 15
+                                            RPC_GsensorProximityExceed, // 15
+                                            RPC_GsensorModeConfig //16
                                              /* Este comando no esta implementado aun */
 };
 
@@ -288,6 +311,9 @@ static portTASK_FUNCTION(ButtonRTOSTask, pvParameters)
 
     uint8_t prox1 = 0 ,prox2 = 0;
     uint8_t gesture = 0;
+
+    uint8_t fifo_level = 0;
+    uint8_t gstatus;
 
     if(I2C_IF_Open(I2C_MASTER_MODE_STD) < 0)
         while (1);
@@ -328,21 +354,49 @@ static portTASK_FUNCTION(ButtonRTOSTask, pvParameters)
 
             break;
             case GSENSOR_FLAG:
+                if(!fifomod.fifo_mode)
+                {
+                    gesture = SF_APDS9960_readGesture();
 
-                gesture = SF_APDS9960_readGesture();
+                    SF_APDS9960_readProximity(&prox1);
+                    SF_APDS9960_getProximityIntHighThreshold(&prox2);
 
-                SF_APDS9960_readProximity(&prox1);
-                SF_APDS9960_getProximityIntHighThreshold(&prox2);
+                    if(gesture)
+                        TivaRPC_SendFrame(COMMAND_GSENSOR_GESTURE, &gesture, sizeof(gesture));
 
-                if(gesture)
-                    TivaRPC_SendFrame(COMMAND_GSENSOR_GESTURE, &gesture, sizeof(gesture));
+                    if(prox1 >= prox2)
+                        TivaRPC_SendFrame(COMMAND_GSENSOR_THRESHOLD_EXCEED, &prox1, sizeof(prox1));
+                 }
+                 else
+                 {
+                     if(SF_APDS9960_wireReadDataByte(SF_APDS9960_GSTATUS, &gstatus) )
+                     {
+                         if( (gstatus & SF_APDS9960_GVALID) == SF_APDS9960_GVALID )
+                         {
+                             if(SF_APDS9960_wireReadDataByte(SF_APDS9960_GFLVL, &fifo_level) )
+                             {
 
-                if(prox1 >= prox2)
-                    TivaRPC_SendFrame(COMMAND_GSENSOR_THRESHOLD_EXCEED, &prox1, sizeof(prox1));
+                                 if( fifo_level > 0)
+                                 {
+                                     int16_t size;
+                                     size = SF_APDS9960_wireReadDataBlock(  SF_APDS9960_GFIFO_U,
+                                                                     (uint8_t*)&data_read.fifo_data,
+                                                                     (fifo_level * 4) );
 
+                                     if(size >= 0)
+                                     {
+                                         data_read.data_size = (uint8_t)size;
+                                         TivaRPC_SendFrame(COMMAND_GSENSOR_FIFO, &data_read, sizeof(data_read));
+
+                                     }
+
+                                  }
+                              }
+                          }
+                       }
+                  }
 
             break;
-
         }
     }
 }
@@ -532,6 +586,9 @@ void TivaRPC_Init(void)
     if(NULL == uart_mutex)
         while(1);
 
+    i2c_mutex = xSemaphoreCreateMutex();
+    if(NULL == i2c_mutex)
+      while(1);
 
     if(xTaskCreate(TivaRPC_ServerTask, (portCHAR *)"usbser",TIVARPC_TASK_STACK, NULL, TIVARPC_TASK_PRIORITY, NULL) != pdTRUE)
     {
@@ -549,6 +606,8 @@ void TivaRPC_Init(void)
     sampling_config.config.active = 0;
     sampling_config.config.mode12 = 0;
     sampling_config.config.freq = 1;
+
+    fifomod.fifo_mode = false;
 
     TimerLoadSet(TIMER5_BASE,TIMER_A,(SysCtlClockGet()/sampling_config.config.freq) - 1);
 
@@ -614,4 +673,5 @@ static int32_t TivaRPC_ReceiveFrame(uint8_t *frame, int32_t maxFrameSize)
         return (i-END_SIZE);    //Devuelve el numero de bytes recibidos (quitando el de BYTE DE STOP)
     }
 }
+
 

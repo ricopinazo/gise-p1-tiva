@@ -22,8 +22,8 @@
 #define TIVARPC_TASK_STACK (512)
 #define TIVARPC_TASK_PRIORITY (tskIDLE_PRIORITY+2)
 
-#define BUTTONS_FLAG (1 << 0)
-#define GSENSOR_FLAG (1 << 3)
+#define BUTTONS_FLAG        (1 << 0)
+#define GSENSOR_FLAG        (1 << 3)
 
 void TivaRPC_Init(void);
 int32_t TivaRPC_SendFrame(uint8_t comando,void *parameter,int32_t paramsize);
